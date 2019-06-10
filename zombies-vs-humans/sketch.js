@@ -51,8 +51,6 @@ class Board {
 			}
 		}
 
-		
-
 		return schema;
 	}
 
@@ -61,99 +59,45 @@ class Board {
 		
 		this.schema.forEach((line, i) => {
 			line.forEach((cell, j) => {
-				if (cell.type === 'human') {
-					for (let k = i - 1; k <= i + 1; k++) {
-						if (!auxSchema[i]) {
-							auxSchema[i] = [];
-						}
-						for (let l = j - 1; l <= j + 1; l++) {
-							if (k >= 0 && k < this.size && l >= 0 && l < this.size && (k !== i || l !== j)) {
-								if (this.schema[k][l].type === 'zombie') {
-									auxSchema[i][j] = {
-										pos: cell.pos,
-										size: cell.size,
-										type: 'zombie'
-									};
-									break;
-								}
+				let zombies = 0;
+				let humans = 0;
+				for (let k = i - 1; k <= i + 1; k++) {
+					if (!auxSchema[i]) {
+						auxSchema[i] = [];
+					}
+					for (let l = j - 1; l <= j + 1; l++) {
+						if (k >= 0 && k < this.size && l >= 0 && l < this.size && (k !== i || l !== j)) {
+							if (this.schema[k][l].type === 'zombie') {
+								zombies += 1;
+							} else if (this.schema[k][l].type === 'human') {
+								humans += 1;
 							}
 						}
-						if (auxSchema.type === 'zombie') {
-							break;
-						}
 					}
-					if (!auxSchema[i][j]) {
-						auxSchema[i][j] = {
-							pos: cell.pos,
-							size: cell.size,
-							type: 'human'
-						};
+				}
+
+				auxSchema[i][j] = {
+					pos: cell.pos,
+					size: cell.size
+				};
+
+				if (cell.type === 'human') {
+					if (zombies >= 1) {
+						auxSchema[i][j].type = 'zombie';
+					} else {
+						auxSchema[i][j].type = 'human';
 					}
 				} else if (cell.type === 'zombie') {
-					let humans = 0;
-					for (let k = i - 1; k <= i + 1; k++) {
-						if (!auxSchema[i]) {
-							auxSchema[i] = [];
-						}
-						for (let l = j - 1; l <= j + 1; l++) {
-							if (k >= 0 && k < this.size && l >= 0 && l < this.size && (k !== i || l !== j)) {
-								if (this.schema[k][l].type === 'human') {
-									humans += 1;
-								}
-								if (humans === 2) {
-									auxSchema[i][j] = {
-										pos: cell.pos,
-										size: cell.size,
-										type: 'empty'
-									};
-									break;
-								}
-							}
-						}
-						if (auxSchema.type === 'empty') {
-							break;
-						}
+					if (humans >= 2 || humans === 0) {
+						auxSchema[i][j].type = 'empty';
+					} else {
+						auxSchema[i][j].type = 'zombie';
 					}
-					if (!auxSchema[i][j]) {
-						auxSchema[i][j] = {
-							pos: cell.pos,
-							size: cell.size,
-							type: humans > 0 ? 'zombie' : 'empty'
-						};
-					}
-				} else {
-					let humans = 0;
-					for (let k = i - 1; k <= i + 1; k++) {
-						if (!auxSchema[i]) {
-							auxSchema[i] = [];
-						}
-						for (let l = j - 1; l <= j + 1; l++) {
-							if (k >= 0 && k < this.size && l >= 0 && l < this.size && (k !== i || l !== j)) {
-								if (this.schema[k][l].type === 'human') {
-									humans += 1;
-								}
-								if (humans > 2) {
-									break;
-								}
-							}
-						}
-						if (humans > 2) {
-							break;
-						}
-					}
+				} else if (cell.type === 'empty') {
 					if (humans === 2) {
-						auxSchema[i][j] = {
-							pos: cell.pos,
-							size: cell.size,
-							type: 'human'
-						};
-					}
-					if (!auxSchema[i][j]) {
-						auxSchema[i][j] = {
-							pos: cell.pos,
-							size: cell.size,
-							type: 'empty'
-						};
+						auxSchema[i][j].type = 'human';
+					} else {
+						auxSchema[i][j].type = 'empty';
 					}
 				}
  			});
