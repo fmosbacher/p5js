@@ -1,145 +1,233 @@
 const snakeInitialSize = 3;
-const populationsSize = 121;
+const populationsSize = 100;
+const mutationRate = 0.03;
 let bestScores;
 let snakeStep;
 let games;
-let snake;
-let fruit;
 let score;
-let direction;
 let generation;
+let cycles;
 
 function setup() {
 	createCanvas(700, 700);
-	// frameRate(60);
+	// frameRate(10);
 	tf.setBackend('cpu');
 
 	snakeStep = floor(width / 20);
 	games = [];
 	bestScores = [0];
 	generation = 0;
-	
+	cycles = [Date.now()];	
 	for (let i = 0; i < populationsSize; i++) {
-		games.push({
-			model: getNewModel(),
-			snake: getNewSnake(),
-			fruit: { },
-			score: 0,
-			direction: 'right',
-			isFinished: false,
-			stepsWithNoScore: 0
-		});
+		games.push(createGame());
 	}
 }
 
 function draw() {
 	background(255);
+	
+	// Genetic Algorithm Evolution
+	if (allGamesAreFinished()) {
+		const selectionPool = createSelectionPool();
+		const bestScore = games.slice().sort((a, b) => b.score - a.score)[0].score;
 
-	if (games.filter(game => !game.isFinished).length === 0) {
-		const gamesCopy = Object.assign([], games);
-		
+		bestScores.push(bestScore);
 		generation += 1;
 		games = [];
-		gamesCopy.sort((a, b) => b.score - a.score);
 		
-		console.log(`Generation: ${generation}, best score: ${gamesCopy[0].score}`);
-		bestScores.push(gamesCopy[0].score);
+		cycles.push(Date.now());
+		timeDiff = cycles[cycles.length - 1] - cycles[cycles.length - 2];
+		const min = round(timeDiff / (1000 * 60));
+		timeDiff -= min * 1000 * 60;
+		const sec = round(timeDiff / 1000);
 
-		let totalScore = 0;
-		let accumulatedScores = [];
-
-		for (let i = 0; i < gamesCopy.length; i++) {
-			totalScore += gamesCopy[i].score;
-			accumulatedScores.push(totalScore);
+		for (let i = 0; i < populationsSize; i++) {
+			const selectedIndividuals = selectIndividuals(selectionPool, 2);
+			const newIndividual = crossover(selectedIndividuals[0], selectedIndividuals[1]);
+			games.push(mutate(newIndividual));
 		}
 
-		accumulatedScores = accumulatedScores.map(accScore => accScore / totalScore);
-
-		for (let i = 0; i < gamesCopy.length; i++) {
-			const randomValue = random();
-			let index = 0;
-
-			while (randomValue > accumulatedScores[index]) {
-				index += 1;
-			}
-
-			const weights = gamesCopy[index].model.getWeights();
-			const randomRate = 0.2;
-			let newWeights = [];
-
-			for (let j = 0; j < weights.length; j++) {
-				const shape = weights[j].shape;
-				const values = weights[j].dataSync().slice();
-				for (let k = 0; k < values.length; k++) {
-					if (random() < randomRate) {
-						values[k] += randomGaussian();
-					}
-				}
-				newWeights.push(tf.tensor(values, shape));
-			}
-
-			games.push({
-				model: getNewModel(newWeights),
-				snake: getNewSnake(),
-				fruit: {},
-				score: 0,
-				direction: 'right',
-				isFinished: false,
-				stepsWithNoScore: 0
-			});
-		}
+		console.log(`Generation: ${generation}, best score: ${bestScore}, cycle: ${min}m ${sec}s`);
 	}
-	
+
+	// Main Loop
 	for (let i = 0; i < games.length; i++) {
 		if (!games[i].isFinished) {
-			if (Object.keys(games[i].fruit).length === 0) {
-				updateFruitPosition(games[i]);
+			if (!fruitExists(games[i].fruit)) {
+				games[i].fruit = createFruit(games[i].snake);
 			}
-			predictDirection(games[i]);
-			updateSnakePosition(games[i]);
-			checkCollisions(games[i]);
-			updateScore(games[i]);
+			games[i].direction = predictDirection(games[i].model, games[i].snake, games[i].fruit);
+			updateSnakePosition(games[i].snake, games[i].direction);
+			games[i].isFinished = checkCollisions(games[i].snake);
+			
+			const scored = checkForFruit(games[i].snake, games[i].fruit);
+			
+			if (scored) {
+				games[i].snake.unshift({
+					x: games[i].snake[0].x,
+					y: games[i].snake[0].y
+				});
+				games[i].fruit = {};
+				games[i].score += 1;
+				games[i].stepsWithNoScore = 0;
+			} else {
+				games[i].stepsWithNoScore += 1;
+			}
+			
+			if (games[i].stepsWithNoScore > 300) {
+				games[i].isFinished = true;
+			}
 		}
 	}
 	
-	renderGames();
+	render();
 }
 
-function predictDirection(game) {
-	const outputs = game.model.predict(getState(game)).arraySync();
+function createGame(weights) {
+	return {
+		model: createModel(weights),
+		snake: getNewSnake(),
+		fruit: {},
+		score: 0,
+		direction: 'right',
+		isFinished: false,
+		stepsWithNoScore: 0
+	};
+}
+
+function fruitExists(fruit) {
+	return Object.keys(fruit).length > 0;
+}
+
+function allGamesAreFinished() {
+	return games.filter(game => !game.isFinished).length === 0;
+}
+
+function createSelectionPool() {
+	const gamesCopy = games.slice();
+	const scoreSum = gamesCopy.map(game => game.score).reduce((acc, value) => acc + value);
+	let selectionPool = [];
+
+	if (scoreSum > 0) {
+		for (let i = 0; i < populationsSize; i++) {
+			const timesInPool = round(gamesCopy[i].score * 100 / scoreSum);
+			for (let j = 0; j < timesInPool; j++) {
+				const weights = gamesCopy[i].model.getWeights();
+				selectionPool.push(createGame(weights));
+			}
+		}
+	} else {
+		for (let i = 0; i < populationsSize; i++) {
+			const weights = random(gamesCopy).model.getWeights();
+			selectionPool.push(createGame(weights));
+		}
+	}
+
+	return selectionPool;
+}
+
+function selectIndividuals(selectionPool, numIndividuals) {
+	let individuals = [];
+
+	for (let i = 0; i < numIndividuals; i++) {
+		const selectedIndividual = random(selectionPool);
+		const weights = selectedIndividual.model.getWeights();
+		individuals.push(createGame(weights));
+	}
+
+	return individuals;
+}
+
+function crossover(a, b) {
+	const aWeights = a.model.getWeights();
+	const bWeights = b.model.getWeights();
+	const cutIndex = floor(random(0, aWeights.length));
+	let newWeights = [];
+
+	for (let i = 0; i < aWeights.length; i++) {
+		if (i < cutIndex) {
+			newWeights.push(aWeights[i].clone());
+		} else {
+			newWeights.push(bWeights[i].clone());
+		}
+	}
+
+	// for (let i = 0; i < aWeights.length; i++) {
+	// 	const shape = aWeights[i].shape;
+	// 	const aValues = aWeights[i].dataSync().slice();
+	// 	const bValues = bWeights[i].dataSync().slice();
+	// 	const cutIndex = floor(random(0, aValues.length));
+	// 	let newValues = [];
+
+	// 	for (let j = 0; j < aValues.length; j++) {
+	// 		if (j < cutIndex) {
+	// 			newValues.push(aValues[j]);
+	// 		} else {
+	// 			newValues.push(bValues[j]);
+	// 		}
+	// 	}
+
+	// 	newWeights.push(tf.tensor(newValues, shape));
+	// }
+
+	return createGame(newWeights);
+}
+
+function mutate(individual) {
+	const weights = individual.model.getWeights();
+	let newWeights = [];
+
+	for (let i = 0; i < weights.length; i++) {
+		const shape = weights[i].shape;
+		const values = weights[i].dataSync().slice();
+		
+		for (let j = 0; j < values.length; j++) {
+			if (random() < mutationRate) {
+				values[j] += randomGaussian();
+			}
+		}
+		
+		newWeights.push(tf.tensor(values, shape));
+	}
+
+	return createGame(newWeights);
+}
+
+function predictDirection(model, snake, fruit) {
+	const outputs = model.predict(getState(snake, fruit)).arraySync();
 	const sortedOutputs = outputs[0]
 		.map((value, index) => ({ value, index }))
 		.sort((a, b) => b.value - a.value);
 
 	if (sortedOutputs[0].index === 0) {
-		game.direction = 'up';
+		return 'up';
 	} else if (sortedOutputs[0].index === 1) {
-		game.direction = 'down';
+		return 'down';
 	} else if (sortedOutputs[0].index === 2) {
-		game.direction = 'right';
+		return 'right';
 	} else if (sortedOutputs[0].index === 3) {
-		game.direction = 'left';
+		return 'left';
 	}
 }
 
-function getState(game) {
-	const snakeHead = game.snake[game.snake.length - 1];
-	const isUpBlocked = game.snake
+function getState(snake, fruit) {
+	const snakeHead = snake[snake.length - 1];
+	const isUpBlocked = snake
 		.filter(part => part.y === snakeHead.y - snakeStep && part.x === snakeHead.x).length > 0 ||
 		snakeHead.y - snakeStep <= 0;
-	const isRightBlocked = game.snake
+	const isRightBlocked = snake
 		.filter(part => part.x === snakeHead.x + snakeStep && part.y === snakeHead.y).length > 0 ||
 		snakeHead.x + snakeStep >= width;
-	const isDownBlocked = game.snake
+	const isDownBlocked = snake
 		.filter(part => part.y === snakeHead.y + snakeStep && part.x === snakeHead.x).length > 0 ||
 		snakeHead.y + snakeStep >= height;
-	const isLeftBlocked = game.snake
+	const isLeftBlocked = snake
 		.filter(part => part.x === snakeHead.x - snakeStep && part.y === snakeHead.y).length > 0 ||
 		snakeHead.x - snakeStep <= 0;
-	const isFruitUp = snakeHead.y > game.fruit.y;
-	const isFruitRight = snakeHead.x < game.fruit.x;
-	const isFruitDown = snakeHead.y < game.fruit.y;
-	const isFruitLeft = snakeHead.x > game.fruit.x;
+	const isFruitUp = snakeHead.y > fruit.y;
+	const isFruitRight = snakeHead.x < fruit.x;
+	const isFruitDown = snakeHead.y < fruit.y;
+	const isFruitLeft = snakeHead.x > fruit.x;
 
 	return tf.tensor([[
 		isUpBlocked, isRightBlocked, isDownBlocked, isLeftBlocked,
@@ -147,60 +235,36 @@ function getState(game) {
 	]]);
 }
 
-function checkCollisions(game) {
-	const { snake } = game;
+function checkCollisions(snake) {
 	const { x, y } = snake[snake.length - 1];
 	const xOut = x < snakeStep || x > width - snakeStep;
 	const yOut = y < snakeStep || y > height - snakeStep;
-	let isDead = false;
+	let isFinished = false;
 
 	if (xOut || yOut) {
-		isDead = true;
+		isFinished = true;
 	}
 
 	for (let i = 0; i < snake.length - 1; i++) {
 		if (x === snake[i].x && y === snake[i].y) {
-			isDead = true;
+			isFinished = true;
 		}
 	}
 
-	if (isDead) {
-		game.isFinished = true;
-	}
+	return isFinished;
 }
 
-function updateScore(game) {
-	const { snake, fruit } = game;
+function checkForFruit(snake, fruit) {
 	const { x, y } = snake[snake.length - 1];
-
-	if (x === fruit.x && y === fruit.y) {
-		snake.unshift({
-			x: snake[0].x,
-			y: snake[0].y
-		});
-		game.fruit = {};
-		game.score += 1;
-		game.stepsWithNoScore = 0;
-	} else {
-		game.stepsWithNoScore += 1;
-	}
+	return x === fruit.x && y === fruit.y;
 }
 
-function updateSnakePosition(game) {
-	const { snake, direction } = game;
-
-	if (game.stepsWithNoScore > 300) {
-		game.isFinished = true;
-	}
-
+function updateSnakePosition(snake, direction) {
 	for (let i = 0; i < snake.length - 1; i++) {
-		snake[i] = {
-			x: snake[i + 1].x,
-			y: snake[i + 1].y
-		};
+		snake[i] = snake[i + 1];
 	}
 
-	let { x, y } = snake[snake.length - 2];
+	let { x, y } = snake[snake.length - 1];
 
 	if (direction === 'up') {
 		y -= snakeStep;
@@ -218,19 +282,21 @@ function updateSnakePosition(game) {
 	snake[snake.length - 1] = { x, y };
 }
 
-function updateFruitPosition(game) {
-	let x, y;
+function createFruit(snake) {
+	let x, y, position;
 
 	do {
 		const wRandom = random(snakeStep, width - snakeStep);
 		const hRandom = random(snakeStep, height - snakeStep);
 		x = wRandom - wRandom % snakeStep;
 		y = hRandom - hRandom % snakeStep;
-		game.fruit = { x, y };
-	} while (game.snake.filter(part => part.x === x && part.y === y).length > 0);
+		position = { x, y };
+	} while (snake.filter(part => part.x === x && part.y === y).length > 0);
+
+	return position;
 }
 
-function getNewModel(weights) {
+function createModel(weights) {
 	let model;
 
 	tf.tidy(() => {
@@ -239,19 +305,25 @@ function getNewModel(weights) {
 				tf.layers.dense({
 					inputShape: [8],
 					units: 8,
-					useBias: true
+					useBias: false
 				}),
 				tf.layers.dense({
 					units: 4,
-					useBias: true
+					useBias: false
 				})
 			]
 		});
+		
+		if (weights) {
+			const weightsCopy = [];
+			
+			for (let i = 0; i < weights.length; i++) {
+				weightsCopy.push(weights[i].clone());
+			}
+			
+			model.setWeights(weightsCopy);
+		}
 	});
-
-	if (weights) {
-		model.setWeights(weights);
-	}
 
 	return model;
 }
@@ -269,7 +341,7 @@ function getNewSnake() {
 	return newSnake;
 }
 
-function renderGames() {
+function render() {
 	const gridSize = ceil(sqrt(games.length));
 	const rowSize = height / ceil(sqrt(games.length));
 	const colSize = width / ceil(sqrt(games.length));
